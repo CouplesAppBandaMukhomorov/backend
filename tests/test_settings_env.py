@@ -128,6 +128,29 @@ def test_dollar_is_escaped_so_the_value_survives():
     assert "FERNET_KEY=a$$b\n" in result.stdout
 
 
+def test_unencoded_at_sign_in_the_database_password_is_rejected():
+    result = render(**all_settings(DATABASE_URL="postgresql+asyncpg://couple:p@ss@host:5432/db"))
+
+    assert result.returncode != 0
+    assert "DATABASE_URL" in result.stderr
+    assert "%40" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "postgresql+asyncpg://couple:p%40ss@host.docker.internal:5432/couple",
+        "postgresql+asyncpg://couple:plain@host:5432/couple",
+        "postgresql+asyncpg://host:5432/couple",
+    ],
+)
+def test_valid_database_url_forms_are_accepted(database_url):
+    result = render(**all_settings(DATABASE_URL=database_url))
+
+    assert result.returncode == 0, result.stderr
+    assert f"DATABASE_URL={database_url}\n" in result.stdout
+
+
 def test_example_env_documents_every_setting():
     keys = {
         line.split("=", 1)[0].strip().lower()

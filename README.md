@@ -54,7 +54,7 @@ uvicorn app.main:app --reload
 | Переменная | Назначение |
 |---|---|
 | `APP_NAME` / `APP_VERSION` | название и версия, попадающие в OpenAPI |
-| `DATABASE_URL` | DSN PostgreSQL, например `postgresql+asyncpg://couple:couple@localhost:5432/couple` |
+| `DATABASE_URL` | DSN PostgreSQL, например `postgresql+asyncpg://couple:couple@localhost:5432/couple`. В проде хост — не `localhost`, см. «Postgres на том же сервере» |
 | `POSTGRES_PORT` | порт, который публикует docker compose для базы |
 | `JWT_SECRET` | секрет подписи JWT, обязательно заменить |
 | `ACCESS_TOKEN_TTL_MINUTES` / `REFRESH_TOKEN_TTL_DAYS` | время жизни токенов |
@@ -387,10 +387,84 @@ render_env: cannot write DATABASE_URL to .env: the value contains a space follow
    пайплайн делает `git fetch` и переключается на конкретный коммит (`github.sha`), поэтому
    на прод попадает ровно тот код, который прошёл тесты.
 4. `curl` для health-check.
-5. Внешняя база данных, доступная из контейнера; её DSN кладётся в секрет `DATABASE_URL`.
+5. PostgreSQL рядом с контейнером, на том же сервере. Его DSN кладётся в секрет `DATABASE_URL`,
+   а как настроить сам Postgres — в разделе ниже.
 
 `.env` в `DEPLOY_PATH` собирается пайплайном при каждом деплое: `scripts/render_env.sh` читает
 настройки из окружения job-а и печатает файл, который затем уезжает на сервер. Руками его
 заводить не нужно. Если обязательная настройка не задана в GitHub, деплой падает **до**
 подключения к серверу, поэтому контейнер не может подняться с пустой конфигурацией. Файл
 исключён из `git clean`, так что прод-настройки не затираются.
+
+#### Postgres на том же сервере
+
+База живёт нативно на хосте, а не в compose-проекте. Внутри контейнера `localhost` — это сам
+контейнер, поэтому в DSN нужен адрес хоста:
+
+```
+DATABASE_URL=postgresql+asyncpg://couple:<пароль>@host.docker.internal:5432/couple
+```
+
+`host.docker.internal` в Linux-контейнере указывает на хост только если объявлен gateway. Это
+уже сделано в `docker-compose.prod.yml`:
+
+```yaml
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+```
+
+Проверить, что механизм работает именно на вашем сервере, можно так — он подставит тот же
+самый адрес:
+
+```bash
+docker run --rm --add-host host.docker.internal:host-gateway alpine \
+  nc -zv host.docker.internal 5432
+```
+
+**Пароль в DSN процентно кодируется.** SQLAlchemy декодирует percent-escapes, но `@` в
+незакодированном виде ломает разбор молча: `couple:p@ss@host` разбирается как пароль `p` и
+хост `ss@host`, и приложение уйдёт подключаться не туда. Поэтому `@` → `%40`, `:` → `%3A`,
+`/` → `%2F`, `#` → `%23`, `%` → `%25`. `scripts/render_env.sh` падает, если в `DATABASE_URL`
+больше одного `@`, и подсказывает замену.
+
+Что нужно сделать на сервере один раз:
+
+1. Роль и базу:
+
+   ```bash
+   sudo -u postgres psql -c "CREATE ROLE couple LOGIN PASSWORD '<пароль>';"
+   sudo -u postgres psql -c "CREATE DATABASE couple OWNER couple;"
+   ```
+
+2. Разрешить подключения из docker-подсети. В `postgresql.conf`:
+
+   ```
+   listen_addresses = '*'
+   ```
+
+   В `pg_hba.conf` — строка под адрес шлюза compose-сети:
+
+   ```
+   host    all    all    172.16.0.0/12    scram-sha-256
+   ```
+
+   Точный адрес вашей сети:
+
+   ```bash
+   docker network inspect "$(basename "$PWD")_default" \
+     --format '{{range .IPAM.Config}}{{.Gateway}}{{"\n"}}{{end}}'
+   ```
+
+   Затем `sudo systemctl reload postgresql`.
+
+3. Если проверка из контейнера не проходит, посмотрите `ss -ltnp | grep 5432`: **Postgres должен
+   слушать не только `127.0.0.1`**. Это самая частая причина.
+
+Полезно знать: на macOS с Docker Desktop тот же контейнер достучится до хоста, даже если
+Postgres слушает только `127.0.0.1`, — Docker Desktop проксирует loopback хоста через свой
+внутренний адрес (`192.168.65.254`). На Linux `host-gateway` раскрывается в IP шлюза бриджа
+(`172.17.0.1` и подобные), и такой listener отвечать не будет. То есть локальная проверка на
+маке может скрыть проблему, которая проявится на сервере.
+
+Compose-сервис `db` из `docker-compose.yml` в этом варианте не используется: деплой запускает
+`up --no-deps api`, поэтому контейнер с базой не поднимается и пайплайн его не трогает.

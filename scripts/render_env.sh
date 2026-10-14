@@ -56,6 +56,13 @@ check_value() {
       reject "$name" "the value ends with a backslash"
       ;;
   esac
+
+  if [ "$name" = "DATABASE_URL" ]; then
+    local at_signs="${value//[^@]/}"
+    if [ "${#at_signs}" -gt 1 ]; then
+      reject "$name" "the value has more than one @, so the password is probably not percent-encoded (@ must be %40, : must be %3A)"
+    fi
+  fi
 }
 
 missing=0
