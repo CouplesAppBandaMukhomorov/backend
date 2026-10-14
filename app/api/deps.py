@@ -12,7 +12,16 @@ from app.db.session import get_db
 from app.models.couple import Couple, CoupleMember
 from app.models.user import User
 
-bearer_scheme = HTTPBearer(auto_error=False)
+bearer_scheme = HTTPBearer(
+    auto_error=False,
+    scheme_name="BearerAuth",
+    bearerFormat="JWT",
+    description=(
+        "Access-токен из `POST /auth/register`, `POST /auth/login`, `POST /auth/google` "
+        "или `POST /auth/refresh`. Передаётся как `Authorization: Bearer <access_token>`. "
+        "Живёт 30 минут, продлевается через `POST /auth/refresh`."
+    ),
+)
 
 
 async def get_current_user(

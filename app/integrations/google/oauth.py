@@ -3,7 +3,7 @@ from urllib.parse import urlencode
 import httpx
 
 from app.core.config import get_settings
-from app.core.errors import BadRequest, GoogleApiError
+from app.core.errors import BadRequest, ConfigurationError, GoogleApiError
 
 GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
@@ -70,7 +70,7 @@ async def revoke_token(token: str) -> None:
 async def verify_id_token(id_token: str) -> dict:
     settings = get_settings()
     if not settings.google_client_id:
-        raise GoogleApiError(
+        raise ConfigurationError(
             "Google login is not configured: GOOGLE_CLIENT_ID is missing",
             code="google_login_not_configured",
         )

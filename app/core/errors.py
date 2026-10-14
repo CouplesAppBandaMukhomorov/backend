@@ -42,6 +42,11 @@ class Conflict(ApiError):
     code = "conflict"
 
 
+class ConfigurationError(ApiError):
+    status_code = 500
+    code = "server_misconfigured"
+
+
 class GoogleApiError(ApiError):
     status_code = 502
     code = "google_api_error"

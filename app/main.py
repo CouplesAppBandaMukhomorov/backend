@@ -6,6 +6,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.openapi import API_DESCRIPTION, TAGS_METADATA, install_openapi
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.errors import ApiError
@@ -20,7 +21,17 @@ async def lifespan(_app: FastAPI):
     await engine.dispose()
 
 
-app = FastAPI(title=settings.app_name, lifespan=lifespan)
+app_options: dict = {
+    "title": settings.app_name,
+    "version": settings.app_version,
+    "description": API_DESCRIPTION,
+    "openapi_tags": TAGS_METADATA,
+    "lifespan": lifespan,
+}
+if settings.api_server_url:
+    app_options["servers"] = [{"url": settings.api_server_url}]
+
+app = FastAPI(**app_options)
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,9 +64,17 @@ async def validation_error_handler(_request: Request, exc: RequestValidationErro
     )
 
 
-@app.get("/health", tags=["service"])
+@app.get(
+    "/health",
+    tags=["service"],
+    summary="Проверка живости сервиса",
+    description="Возвращает `{\"status\": \"ok\"}`, если процесс поднят. "
+    "Базу данных и Google не проверяет, для мониторинга хватает этого ответа.",
+)
 async def health() -> dict:
     return {"status": "ok"}
 
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)
+
+install_openapi(app)

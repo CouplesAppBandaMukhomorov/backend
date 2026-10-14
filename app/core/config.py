@@ -7,8 +7,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "Couple API"
+    app_version: str = "0.1.0"
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
+    api_server_url: str = ""
 
     database_url: str = "postgresql+asyncpg://couple:couple@localhost:5432/couple"
 

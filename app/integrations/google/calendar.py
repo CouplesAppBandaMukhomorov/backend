@@ -39,7 +39,7 @@ class GoogleCalendarClient:
             return GoogleApiError(message, code="calendar_not_found", status_code=404)
         if response.status_code in (401, 403):
             return GoogleApiError(message, code="google_access_denied", status_code=403)
-        return GoogleApiError(message)
+        return GoogleApiError(message, code="google_api_error")
 
     async def list_calendars(self) -> list[dict]:
         data = await self._request(
