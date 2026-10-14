@@ -1,0 +1,5 @@
+services:
+  api:
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in .env}

@@ -1,0 +1,140 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  COMPOSE_FILES: "-f docker-compose.yml -f docker-compose.prod.yml"
+
+jobs:
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest -q
+
+  migrate:
+    name: migrations
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Check migration history has a single head
+        run: |
+          heads=$(alembic heads 2>/dev/null | wc -l | tr -d '[:space:]')
+          if [ "$heads" -ne 1 ]; then
+            echo "Expected exactly one migration head, found $heads"
+            exit 1
+          fi
+
+      - name: Render migrations as SQL
+        run: alembic upgrade head --sql > /dev/null
+
+  deploy:
+    name: deploy
+    needs: migrate
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      PRODUCTION_ENV_FILE: ${{ secrets.PRODUCTION_ENV_FILE }}
+      HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          if [ -n "$SSH_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" > ~/.ssh/known_hosts 2>/dev/null
+            test -s ~/.ssh/known_hosts
+          fi
+          cat > ~/.ssh/config <<EOF
+          Host deploy
+            HostName $SSH_HOST
+            Port $SSH_PORT
+            User $SSH_USER
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+            StrictHostKeyChecking accept-new
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Sync the tested commit on the server
+        run: |
+          ssh deploy "
+            set -e
+            cd '$DEPLOY_PATH'
+            git fetch --prune origin
+            git checkout -f ${{ github.sha }}
+            git clean -fd -e .env
+          "
+
+      - name: Upload production environment
+        run: |
+          printf '%s' "$PRODUCTION_ENV_FILE" | ssh deploy "cat > '$DEPLOY_PATH/.env' && chmod 600 '$DEPLOY_PATH/.env'"
+
+      - name: Rebuild and restart the api container
+        run: |
+          ssh deploy "
+            set -e
+            cd '$DEPLOY_PATH'
+            docker compose $COMPOSE_FILES up -d --build --no-deps api
+          "
+
+      - name: Verify the API is up
+        run: |
+          ssh deploy "
+            set -e
+            for attempt in \$(seq 1 36); do
+              if curl -fsS --max-time 5 '$HEALTHCHECK_URL' > /dev/null; then
+                echo 'API responds, deploy finished'
+                exit 0
+              fi
+              echo \"attempt \$attempt: API is not ready yet\"
+              sleep 5
+            done
+            echo 'API did not become healthy in time'
+            cd '$DEPLOY_PATH'
+            docker compose $COMPOSE_FILES logs --tail 200 api
+            exit 1
+          "
