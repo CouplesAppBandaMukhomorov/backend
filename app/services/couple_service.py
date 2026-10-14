@@ -14,6 +14,7 @@ from app.models.user import User
 from app.schemas.calendar import CalendarLink
 from app.schemas.couple import CoupleCreate, CoupleRead, CoupleUpdate
 from app.schemas.user import UserShort
+from app.services import note_service
 
 
 def days_together(together_since: date | None) -> int | None:
@@ -123,6 +124,7 @@ async def leave_couple(db: AsyncSession, user: User) -> None:
 
     if await count_members(db, couple_id) == 0:
         await db.execute(delete(Invitation).where(Invitation.couple_id == couple_id))
+        await note_service.delete_couple_notes(db, couple_id)
         await db.execute(delete(Couple).where(Couple.id == couple_id))
 
     await db.commit()

@@ -34,6 +34,9 @@ EXAMPLES_REQUIRED = (
     "EventCreate",
     "EventUpdate",
     "EventRead",
+    "NoteCreate",
+    "NoteUpdate",
+    "NoteRead",
     "ErrorResponse",
     "ValidationErrorResponse",
 )
@@ -61,7 +64,16 @@ def test_info_is_described(spec):
 
 def test_root_tags_match_operations(spec):
     declared = {tag["name"] for tag in spec.get("tags", [])}
-    assert declared == {"auth", "users", "couples", "invitations", "google", "calendar", "service"}
+    assert declared == {
+        "auth",
+        "users",
+        "couples",
+        "invitations",
+        "google",
+        "calendar",
+        "notes",
+        "service",
+    }
 
     used = {tag for _, _, operation in operations(spec) for tag in operation.get("tags", [])}
     assert used <= declared
