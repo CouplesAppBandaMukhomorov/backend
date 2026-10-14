@@ -35,8 +35,8 @@ jobs:
       - name: Run tests
         run: pytest -q
 
-  migrate:
-    name: migrations
+  check-migrations:
+    name: check migrations
     needs: test
     runs-on: ubuntu-latest
     steps:
@@ -64,7 +64,7 @@ jobs:
 
   deploy:
     name: deploy
-    needs: migrate
+    needs: check-migrations
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -74,9 +74,33 @@ jobs:
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
       SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-      PRODUCTION_ENV_FILE: ${{ secrets.PRODUCTION_ENV_FILE }}
       HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Render the production .env
+        env:
+          APP_NAME: ${{ vars.APP_NAME }}
+          APP_VERSION: ${{ vars.APP_VERSION }}
+          DEBUG: ${{ vars.DEBUG }}
+          API_V1_PREFIX: ${{ vars.API_V1_PREFIX }}
+          API_SERVER_URL: ${{ vars.API_SERVER_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          JWT_ALGORITHM: ${{ vars.JWT_ALGORITHM }}
+          ACCESS_TOKEN_TTL_MINUTES: ${{ vars.ACCESS_TOKEN_TTL_MINUTES }}
+          REFRESH_TOKEN_TTL_DAYS: ${{ vars.REFRESH_TOKEN_TTL_DAYS }}
+          OAUTH_STATE_TTL_MINUTES: ${{ vars.OAUTH_STATE_TTL_MINUTES }}
+          FERNET_KEY: ${{ secrets.FERNET_KEY }}
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REDIRECT_URI: ${{ vars.GOOGLE_OAUTH_REDIRECT_URI }}
+          GOOGLE_CALENDAR_API_BASE: ${{ vars.GOOGLE_CALENDAR_API_BASE }}
+          FRONTEND_REDIRECT_URL: ${{ vars.FRONTEND_REDIRECT_URL }}
+          INVITATION_TTL_DAYS: ${{ vars.INVITATION_TTL_DAYS }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+        run: bash scripts/render_env.sh > .env
+
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
@@ -111,7 +135,7 @@ jobs:
 
       - name: Upload production environment
         run: |
-          printf '%s' "$PRODUCTION_ENV_FILE" | ssh deploy "cat > '$DEPLOY_PATH/.env' && chmod 600 '$DEPLOY_PATH/.env'"
+          ssh deploy "cat > '$DEPLOY_PATH/.env' && chmod 600 '$DEPLOY_PATH/.env'" < .env
 
       - name: Rebuild and restart the api container
         run: |
